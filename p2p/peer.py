@@ -18,12 +18,13 @@ from typing import (
     AsyncIterator,
     cast,
     Dict,
+    Iterable,
     Iterator,
     List,
+    NamedTuple,
     TYPE_CHECKING,
     Tuple,
     Type,
-    Union,
 )
 
 import sha3
@@ -41,7 +42,7 @@ from eth_utils import (
     encode_hex,
 )
 
-from eth_typing import BlockNumber, Hash32
+from eth_typing import BlockIdentifier, BlockNumber, Hash32
 
 from eth_keys import (
     datatypes,
@@ -141,6 +142,106 @@ async def handshake(remote: Node,
     await peer.do_p2p_handshake()
     await peer.do_sub_proto_handshake()
     return peer
+
+
+class HeaderRequest(NamedTuple):
+    block_number_or_hash: int
+    max_headers: int
+    skip: int
+    reverse: bool
+
+    def generate_block_numbers(self,
+                               block_number: int=None) -> Tuple[int]:
+        if block_number is None and not self.is_numbered:
+            raise TypeError(
+                "A `block_number` must be supplied to generate block numbers "
+                "for hash based header requests"
+            )
+        elif block_number is not None and self.is_numbered:
+            raise TypeError(
+                "The `block_number` parameter may not be used for number based "
+                "header requests"
+            )
+        elif block_number is None:
+            block_number = cast(BlockNumber, self.block_number_or_hash)
+
+        max_headers = min(eth.MAX_HEADERS_FETCH, self.max_headers)
+
+        # inline import until this module is moved to `trinity`
+        from trinity.utils.headers import sequence_builder
+        return sequence_builder(
+            block_number,
+            max_headers,
+            self.skip,
+            self.reverse,
+        )
+
+    @property
+    def is_numbered(self) -> bool:
+        return isinstance(self.block_number_or_hash, int)
+
+    def validate_headers(self,
+                         headers: Iterable['BlockHeader']) -> None:
+        if not headers:
+            # empty response is always valid (TODO: deal with this)
+            return
+        elif not self.is_numbered:
+            first_header = headers[0]
+            if first_header.hash != self.block_number_or_hash:
+                raise ValueError("TODO: mismatched first block hash")
+
+        block_numbers: Tuple[BlockNumber, ...] = tuple(
+            header.block_number for header in headers
+        )
+        return self.validate_sequence(block_numbers)
+
+    def validate_sequence(self, block_numbers: Tuple[BlockNumber]) -> None:
+        if not block_numbers:
+            return
+        elif self.is_numbered:
+            expected_numbers = self.generate_block_numbers()
+        else:
+            expected_numbers = self.generate_block_numbers(block_numbers[0])
+
+        # check for numbers that should not be present.
+        unexpected_numbers = set(block_numbers).difference(expected_numbers)
+        if unexpected_numbers:
+            raise ValueError(
+                'Unexpected numbers: {0}'.format(unexpected_numbers))
+
+        # check that the numbers are correctly ordered.
+        expected_order = tuple(sorted(
+            block_numbers,
+            reverse=self.reverse,
+        ))
+        if block_numbers != expected_order:
+            raise ValueError('Invalid ordering')
+
+        # check that all provided numbers are an ordered subset of the master
+        # sequence.
+        iter_expected = iter(expected_numbers)
+        for number in block_numbers:
+            for value in iter_expected:
+                if value == number:
+                    break
+            else:
+                raise ValueError('Unmatched number')
+
+    def is_valid_headers(self, headers: Iterable[BlockHeader]) -> bool:
+        try:
+            self.validate_headers(headers)
+        except ValueError:
+            return False
+        else:
+            return True
+
+    def is_valid_sequence(self, block_numbers: Tuple[BlockNumber]) -> bool:
+        try:
+            self.validate_sequence(block_numbers)
+        except ValueError:
+            return False
+        else:
+            return True
 
 
 class BasePeer(BaseService):
@@ -553,25 +654,28 @@ class LESPeer(BasePeer):
         self.head_td = self.head_info.total_difficulty
         self.head_hash = self.head_info.block_hash
 
-    def request_block_headers(self, block_number_or_hash: Union[int, bytes],
-                              max_headers: int, reverse: bool = True) -> None:
+    def request_block_headers(self,
+                              block_number_or_hash: BlockIdentifier,
+                              max_headers: int = None,
+                              skip: int = 0,
+                              reverse: bool = True) -> HeaderRequest:
+        if max_headers is None:
+            max_headers = self.max_headers_fetch
         request_id = gen_request_id()
+        request = HeaderRequest(
+            block_number_or_hash,
+            max_headers,
+            skip,
+            reverse,
+        )
         self.sub_proto.send_get_block_headers(
-            block_number_or_hash, max_headers, request_id, reverse)
-
-
-def validate_header_response(
-        start_number: int, count: int, reverse: bool, headers: Tuple[BlockHeader, ...]) -> None:
-    if len(headers) != count:
-        raise ValidationError("Expected {} headers, got: {}".format(count, headers))
-    if reverse:
-        headers = tuple(reversed(headers))
-    if headers[0].block_number != start_number:
-        raise ValidationError("Expected {} as first header's number, got: {}".format(
-            start_number, headers[0].block_number))
-    for i, header in enumerate(headers):
-        if header.block_number != start_number + i:
-            raise ValidationError("Header numbers are not sequential: {}".format(headers))
+            request_id,
+            request.block_number_or_hash,
+            request.max_headers,
+            request.skip,
+            request.reverse,
+        )
+        return request
 
 
 class ETHPeer(BasePeer):
@@ -617,9 +721,26 @@ class ETHPeer(BasePeer):
         self.head_td = msg['td']
         self.head_hash = msg['best_hash']
 
-    def request_block_headers(self, block_number_or_hash: Union[int, bytes],
-                              max_headers: int, reverse: bool = True) -> None:
-        self.sub_proto.send_get_block_headers(block_number_or_hash, max_headers, reverse)
+    def request_block_headers(self,
+                              block_number_or_hash: BlockIdentifier,
+                              max_headers: int = None,
+                              skip: int = 0,
+                              reverse: bool = True) -> HeaderRequest:
+        if max_headers is None:
+            max_headers = self.max_headers_fetch
+        request = HeaderRequest(
+            block_number_or_hash,
+            max_headers,
+            skip,
+            reverse,
+        )
+        self.sub_proto.send_get_block_headers(
+            request.block_number_or_hash,
+            request.max_headers,
+            request.skip,
+            request.reverse,
+        )
+        return request
 
 
 class PeerSubscriber(ABC):
@@ -835,9 +956,7 @@ class PeerPool(BaseService, AsyncIterable[BasePeer]):
                 break
 
             start_block = vm_class.dao_fork_block_number - 1
-            max_headers = 2
-            reverse = False
-            peer.request_block_headers(start_block, max_headers, reverse)  # type: ignore
+            request = peer.request_block_headers(start_block, max_headers=2)  # type: ignore
             start = time.time()
             try:
                 while True:
@@ -856,7 +975,7 @@ class PeerPool(BaseService, AsyncIterable[BasePeer]):
                     "Timed out waiting for DAO fork header from {}: {}".format(peer, e))
 
             try:
-                validate_header_response(start_block, max_headers, reverse, headers)
+                request.validate_headers(headers)
                 parent, header = headers
                 vm_class.validate_header(header, parent, check_seal=True)
             except ValidationError as e:
@@ -1044,13 +1163,13 @@ def _test() -> None:
             '0x59af08ab31822c992bb3dad92ddb68d820aa4c69e9560f07081fa53f1009b152')
         if peer_class == ETHPeer:
             peer = cast(ETHPeer, peer)
-            peer.sub_proto.send_get_block_headers(block_hash, 1)
+            peer.sub_proto.send_get_block_headers(block_hash, 1, 0, False)
             peer.sub_proto.send_get_block_bodies([block_hash])
             peer.sub_proto.send_get_receipts([block_hash])
         else:
             peer = cast(LESPeer, peer)
             request_id = 1
-            peer.sub_proto.send_get_block_headers(block_hash, 1, request_id)
+            peer.sub_proto.send_get_block_headers(request_id, block_hash, 1, 0, False)
             peer.sub_proto.send_get_block_bodies([block_hash], request_id + 1)
             peer.sub_proto.send_get_receipts(block_hash, request_id + 2)
 
