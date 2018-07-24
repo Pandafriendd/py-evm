@@ -144,13 +144,13 @@ async def handshake(remote: Node,
 
 
 class HeaderRequest(NamedTuple):
-    block_number_or_hash: int
+    block_number_or_hash: BlockIdentifier
     max_headers: int
     skip: int
     reverse: bool
 
     def generate_block_numbers(self,
-                               block_number: int=None) -> Tuple[int]:
+                               block_number: BlockNumber=None) -> Tuple[BlockNumber, ...]:
         if block_number is None and not self.is_numbered:
             raise TypeError(
                 "A `block_number` must be supplied to generate block numbers "
