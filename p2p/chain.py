@@ -318,7 +318,7 @@ class LightChainSyncer(BaseHeaderChainSyncer):
         self.logger.debug("Peer %s made header request: %s", peer, msg)
         request = HeaderRequest(
             msg['query'].block_number_or_hash,
-            min(msg['query'].max_headers, eth.MAX_HEADERS_FETCH),
+            msg['query'].max_headers,
             msg['query'].skip,
             msg['query'].reverse,
         )
@@ -607,7 +607,7 @@ class FastChainSyncer(BaseHeaderChainSyncer):
         self.logger.debug("Peer %s made header request: %s", peer, query)
         request = HeaderRequest(
             query['block_number_or_hash'],
-            min(query['max_headers'], eth.MAX_HEADERS_FETCH),
+            query['max_headers'],
             query['skip'],
             query['reverse'],
         )
@@ -747,7 +747,7 @@ class PeerRequestHandler(CancellableMixin):
     async def _get_block_numbers_for_request(self,
                                              request: HeaderRequest) -> Tuple[BlockNumber, ...]:
         """
-        Generates the block numbers requested, subject to local availability.
+        Generate the block numbers for a given `HeaderRequest`.
         """
         if isinstance(request.block_number_or_hash, bytes):
             header = await self.wait(
