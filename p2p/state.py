@@ -136,12 +136,12 @@ class StateDownloader(BaseService, PeerSubscriber):
                 # A node may be received more than once, so pop() with a default value.
                 self._pending_nodes.pop(node_key, None)
         elif isinstance(cmd, eth.GetBlockHeaders):
-            query = cast(Dict[Any, Union[str: int]], msg)
+            query = cast(Dict[Any, Union[bool, int]], msg)
             request = HeaderRequest(
                 query['block_number_or_hash'],
                 query['max_headers'],
                 query['skip'],
-                query['reverse'],
+                cast(bool, query['reverse']),
             )
             await self._handle_get_block_headers(peer, request)
         elif isinstance(cmd, eth.GetBlockBodies):

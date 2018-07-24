@@ -174,7 +174,7 @@ class ETHProtocol(Protocol):
         header, body = cmd.encode(data)
         self.send(header, body)
 
-    def send_block_headers(self, headers: Tuple[BlockHeader]) -> None:
+    def send_block_headers(self, headers: Tuple[BlockHeader, ...]) -> None:
         cmd = BlockHeaders(self.cmd_id_offset)
         header, body = cmd.encode(headers)
         self.send(header, body)

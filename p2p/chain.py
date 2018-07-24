@@ -254,7 +254,7 @@ class BaseHeaderChainSyncer(BaseService, PeerSubscriber):
 
         # Pass the peer's token to self.wait() because we want to abort if either we
         # or the peer terminates.
-        headers = list(await self.wait(
+        headers = tuple(await self.wait(
             self._new_headers.get(),
             token=peer.cancel_token,
             timeout=self._reply_timeout))
@@ -263,15 +263,21 @@ class BaseHeaderChainSyncer(BaseService, PeerSubscriber):
         # requested headers.
         request.validate_headers(headers)
 
-        for header in headers.copy():
-            try:
-                await self.wait(self.db.coro_get_block_header_by_hash(header.hash))
-            except HeaderNotFound:
-                break
-            else:
-                self.logger.debug("Discarding %s as we already have it", header)
-                headers.remove(header)
-        return tuple(headers)
+        # the inner list comprehension is required to get python to evaluate
+        # the asynchronous comprehension
+        missing_headers = tuple([
+            header
+            for header
+            in headers
+            if not (await self.wait(self.db.coro_header_exists(header.hash)))
+        ])
+        if len(missing_headers) != len(headers):
+            self.logger.debug(
+                "Discarding %d / %d headers that we already have",
+                len(headers) - len(missing_headers),
+                len(headers),
+            )
+        return headers
 
     def _handle_block_headers(self, headers: Tuple[BlockHeader, ...]) -> None:
         if not headers:
@@ -718,7 +724,7 @@ class PeerRequestHandler(CancellableMixin):
         peer.sub_proto.send_node_data(nodes)
 
     async def lookup_headers(self,
-                             request: HeaderRequest) -> Tuple[BlockHeader]:
+                             request: HeaderRequest) -> Tuple[BlockHeader, ...]:
         """
         Lookup :max_headers: headers starting at :block_number_or_hash:, skipping :skip: items
         between each, in reverse order if :reverse: is True.
@@ -738,7 +744,8 @@ class PeerRequestHandler(CancellableMixin):
         ])
         return headers
 
-    async def _get_block_numbers_for_request(self, request: HeaderRequest) -> Tuple[BlockNumber]:
+    async def _get_block_numbers_for_request(self,
+                                             request: HeaderRequest) -> Tuple[BlockNumber, ...]:
         """
         Generates the block numbers requested, subject to local availability.
         """
@@ -755,7 +762,7 @@ class PeerRequestHandler(CancellableMixin):
             )
 
     async def _generate_available_headers(
-            self, block_numbers: Tuple[BlockNumber]) -> AsyncGenerator[BlockHeader, None]:
+            self, block_numbers: Tuple[BlockNumber, ...]) -> AsyncGenerator[BlockHeader, None]:
         """
         Generates the headers requested, halting on the first header that is not locally available.
         """

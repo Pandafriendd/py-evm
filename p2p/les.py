@@ -343,7 +343,7 @@ class LESProtocol(Protocol):
         self.send(header, body)
 
     def send_block_headers(
-            self, headers: Tuple[BlockHeader], buffer_value: int, request_id: int) -> None:
+            self, headers: Tuple[BlockHeader, ...], buffer_value: int, request_id: int) -> None:
         data = {
             'request_id': request_id,
             'headers': headers,

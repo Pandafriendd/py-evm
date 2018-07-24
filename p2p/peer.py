@@ -18,7 +18,6 @@ from typing import (
     AsyncIterator,
     cast,
     Dict,
-    Iterable,
     Iterator,
     List,
     NamedTuple,
@@ -181,7 +180,7 @@ class HeaderRequest(NamedTuple):
         return isinstance(self.block_number_or_hash, int)
 
     def validate_headers(self,
-                         headers: Iterable['BlockHeader']) -> None:
+                         headers: Tuple[BlockHeader, ...]) -> None:
         if not headers:
             # empty response is always valid (TODO: deal with this)
             return
@@ -195,7 +194,7 @@ class HeaderRequest(NamedTuple):
         )
         return self.validate_sequence(block_numbers)
 
-    def validate_sequence(self, block_numbers: Tuple[BlockNumber]) -> None:
+    def validate_sequence(self, block_numbers: Tuple[BlockNumber, ...]) -> None:
         if not block_numbers:
             return
         elif self.is_numbered:
@@ -227,7 +226,7 @@ class HeaderRequest(NamedTuple):
             else:
                 raise ValueError('Unmatched number')
 
-    def is_valid_headers(self, headers: Iterable[BlockHeader]) -> bool:
+    def is_valid_headers(self, headers: Tuple[BlockHeader, ...]) -> bool:
         try:
             self.validate_headers(headers)
         except ValueError:
@@ -235,7 +234,7 @@ class HeaderRequest(NamedTuple):
         else:
             return True
 
-    def is_valid_sequence(self, block_numbers: Tuple[BlockNumber]) -> bool:
+    def is_valid_sequence(self, block_numbers: Tuple[BlockNumber, ...]) -> bool:
         try:
             self.validate_sequence(block_numbers)
         except ValueError:
