@@ -60,6 +60,12 @@ def test_header_request_generate_block_numbers():
     assert request.generate_block_numbers() == (0, 1, 2, 3, 4)
 
 
+def test_block_number_generation_limited_to_MAX_HEADERS_FETCH():
+    request = HeaderRequest(0, 200, 0, False)
+
+    assert request.generate_block_numbers() == tuple(range(192))
+
+
 @pytest.mark.parametrize(
     "params,sequence,is_match",
     (
